@@ -4,20 +4,25 @@ use anchor_spl::{
     token::{Mint, Token, TokenAccount},
 };
 
-
-
-declare_id!("E1CRjpkK9JyHhNvSFeVy1BgQSJx1CPZQuGfnrXR8Sbs2");
+declare_id!("ASk79fYt7bfuJUcXFJb4eirRYoVio43ciVgq2qKWrVpi");
 
 pub const RATE : u64 = 10;
 
 #[program]
 pub mod remitano {
+    use anchor_spl::token;
+    use spl_token::solana_program::system_instruction;
+
     use super::*;
 
     #[error_code]
     pub enum ErrorCode {
         #[msg("Pool is already initialized")]
         PoolAlreadyInitialized,
+        #[msg("Pool is not initialized")]
+        PoolNotInitialized,
+        #[msg("Invalid rate")]
+        InvalidRate,
     }
 
     // set up the pool SOL <-> MOVE
@@ -30,6 +35,75 @@ pub mod remitano {
 
         // initialize the pool
         pool_state.is_initialized = true;
+        Ok(())
+    }
+
+    // add liquidity to the pool
+    pub fn add_liquidity(ctx: Context<AddLiquidity>, sol_amount: u64, move_amount: u64) -> Result<()> {
+
+        // get the pool mint
+        let pool_mint = &ctx.accounts.pool_mint;
+
+        // get the pool vaults
+        let vault0 = &ctx.accounts.vault0;
+        let vault1 = &ctx.accounts.vault1;
+
+        // get the pool state
+        let pool_state = &ctx.accounts.pool_state;
+
+        // calculate the amount of pool tokens to mint
+        // pool_tokens = sol_amount = move_amount / RATE
+        let pool_tokens = sol_amount;
+
+        // check if the pool is already initialized
+        if !pool_state.is_initialized {
+            return Err(ErrorCode::PoolNotInitialized.into());
+        }
+
+        // mint the pool tokens
+        let bump= ctx.bumps.pool_authority;
+        token::mint_to(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                token::MintTo {
+                    mint: pool_mint.to_account_info(),
+                    to: ctx.accounts.user_ata.to_account_info(),
+                    authority: ctx.accounts.pool_authority.to_account_info(),
+                },
+            ).with_signer(&[
+                &[b"authority", pool_state.key().as_ref(),&[bump]],
+            ]),
+            pool_tokens,
+        )?;
+
+        // deposit the SOL tokens
+        anchor_lang::solana_program::program::invoke_signed(
+            &system_instruction::transfer(
+                ctx.accounts.user_sol.to_account_info().key,
+                vault1.to_account_info().key,
+                sol_amount,
+            ),
+            &[
+                ctx.accounts.user_sol.to_account_info(),
+                vault1.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[],
+        )?;
+
+        // deposit the MOVE tokens
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                token::Transfer {
+                    from: ctx.accounts.user_move.to_account_info(),
+                    to: vault0.to_account_info(),
+                    authority: ctx.accounts.owner.to_account_info(),
+                },
+            ),
+            move_amount,
+        )?;
+
         Ok(())
     }
 }
@@ -97,4 +171,38 @@ pub struct Initialize<'info> {
     pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct AddLiquidity<'info> {
+    #[account(mut)]
+    /// CHECK: This is not dangerous because 
+    pub user_sol: AccountInfo<'info>,
+    #[account(mut, has_one=owner)]
+    pub user_move: Box<Account<'info, TokenAccount>>,
+    #[account(mut, has_one=owner)]
+    pub user_ata: Box<Account<'info, TokenAccount>>,
+
+    pub owner: Signer<'info>,
+
+    #[account(mut)]
+    pub pool_state: Account<'info, PoolState>,
+    #[account(seeds=[b"authority", pool_state.key().as_ref()], bump)]
+    /// CHECK: This is not dangerous because we don't read or write from this account
+    pub pool_authority: AccountInfo<'info>,
+
+    #[account(mut, 
+        constraint = vault0.mint == user_move.mint,
+        seeds=[b"vault0", pool_state.key().as_ref()], bump)]
+    pub vault0: Account<'info, TokenAccount>,
+    #[account(mut, 
+        seeds=[b"vault1", pool_state.key().as_ref()], bump)]
+    pub vault1: Account<'info, TokenAccount>,
+
+    #[account(mut, 
+        constraint = user_ata.mint == pool_mint.key(),
+        seeds=[b"pool_mint", pool_state.key().as_ref()], bump)]
+    pub pool_mint: Account<'info, Mint>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
 }

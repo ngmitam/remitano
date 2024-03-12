@@ -2,6 +2,9 @@ import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Remitano } from "../target/types/remitano";
 import * as token from "@solana/spl-token";
+import { assert } from "chai";
+
+const RATE = 10; // 1 sol: 10 move
 
 describe("remitano", () => {
 	// Configure the client to use the local cluster.
@@ -12,7 +15,58 @@ describe("remitano", () => {
 	const program = anchor.workspace.Remitano as Program<Remitano>;
 
 	let pool;
-	let n_decimals = 9;
+	let nDecimals = 9;
+
+	let LPAmount = (amount: number) => {
+		return new anchor.BN(amount * Math.pow(10, nDecimals));
+	};
+
+	let getBalance = async (ata: anchor.web3.PublicKey) => {
+		return (
+			(await connection.getBalance(ata)) / anchor.web3.LAMPORTS_PER_SOL
+		);
+	};
+
+	let getTokenBalance = async (ata: anchor.web3.PublicKey) => {
+		return (await connection.getTokenAccountBalance(ata)).value.uiAmount;
+	};
+
+	let setupLPProvider = async (
+		lpUser: anchor.web3.Keypair,
+		amount: number
+	) => {
+		let userMove = await token.createAssociatedTokenAccount(
+			connection,
+			lpUser,
+			pool.moveToken,
+			lpUser.publicKey
+		);
+		let userSol = lpUser.publicKey;
+		let userAta = await token.createAssociatedTokenAccount(
+			connection,
+			lpUser,
+			pool.poolMint,
+			lpUser.publicKey
+		);
+		if (userMove && userSol) {
+			await token.mintTo(
+				connection,
+				pool.auth,
+				pool.moveToken,
+				userMove,
+				pool.auth,
+				LPAmount(amount * RATE).toNumber()
+			);
+
+			let sig = await connection.requestAirdrop(
+				userSol,
+				amount * anchor.web3.LAMPORTS_PER_SOL
+			);
+			await connection.confirmTransaction(sig);
+		}
+
+		return [userMove, userSol, userAta];
+	};
 
 	it("Is initialized!", async () => {
 		let auth = anchor.web3.Keypair.generate();
@@ -27,7 +81,7 @@ describe("remitano", () => {
 			auth,
 			auth.publicKey,
 			auth.publicKey,
-			n_decimals
+			nDecimals
 		);
 
 		let [poolState, poolState_b] =
@@ -58,26 +112,22 @@ describe("remitano", () => {
 				program.programId
 			);
 
-		await program.rpc
-			.initialize({
-				accounts: {
-					moveToken,
-					poolState,
-					poolAuthority,
-					vault0,
-					vault1,
-					poolMint,
-					payer: auth.publicKey,
-					systemProgram: anchor.web3.SystemProgram.programId,
-					tokenProgram: token.TOKEN_PROGRAM_ID,
-					associatedTokenProgram: token.ASSOCIATED_TOKEN_PROGRAM_ID,
-					rent: anchor.web3.SYSVAR_RENT_PUBKEY,
-				},
-				signers: [auth],
-			})
-			.catch((err) => {
-				console.log(err);
-			});
+		await program.rpc.initialize({
+			accounts: {
+				moveToken,
+				poolState,
+				poolAuthority,
+				vault0,
+				vault1,
+				poolMint,
+				payer: auth.publicKey,
+				systemProgram: anchor.web3.SystemProgram.programId,
+				tokenProgram: token.TOKEN_PROGRAM_ID,
+				associatedTokenProgram: token.ASSOCIATED_TOKEN_PROGRAM_ID,
+				rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+			},
+			signers: [auth],
+		});
 
 		pool = {
 			moveToken,
@@ -88,5 +138,52 @@ describe("remitano", () => {
 			poolMint,
 			auth,
 		};
+	});
+	let lpUser0; // Liquidity Provider 0
+	it("addLiquidity", async () => {
+		let lpUser = anchor.web3.Keypair.generate();
+		let sig = await connection.requestAirdrop(
+			lpUser.publicKey,
+			100 * anchor.web3.LAMPORTS_PER_SOL
+		);
+		await connection.confirmTransaction(sig);
+		let [userMove, userSol, userAta] = await setupLPProvider(lpUser, 1000);
+		assert(userMove);
+		assert(userSol);
+		assert(userAta);
+
+		lpUser0 = {
+			// here
+			signer: lpUser,
+			userMove,
+			userSol,
+			userAta,
+		};
+
+		let [moveAmount, solAmount] = [LPAmount(50), LPAmount(500)];
+		await program.rpc.addLiquidity(moveAmount, solAmount, {
+			accounts: {
+				userSol,
+				userMove,
+				userAta,
+				owner: lpUser.publicKey,
+				poolState: pool.poolState,
+				poolAuthority: pool.poolAuthority,
+				vault0: pool.vault0,
+				vault1: pool.vault1,
+				poolMint: pool.poolMint,
+				tokenProgram: token.TOKEN_PROGRAM_ID,
+				systemProgram: anchor.web3.SystemProgram.programId,
+			},
+			signers: [lpUser],
+		});
+
+		// ensure vault got some
+		let vb0 = await getTokenBalance(pool.vault0);
+		let vb1 = await getBalance(pool.vault1);
+
+		assert(vb0 > 0);
+		assert(vb1 > 0);
+		assert(vb1 * 10 >= vb0); // 1:10
 	});
 });
