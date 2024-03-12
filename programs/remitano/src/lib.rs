@@ -67,16 +67,9 @@ pub struct Initialize<'info> {
     )]
     pub vault0: Box<Account<'info, TokenAccount>>, 
 
-    // account to hold SOL tokens
-    #[account(
-        init,
-        payer=payer,
-        seeds=[b"vault1", pool_state.key().as_ref()],
-        bump,
-        token::mint = move_token,
-        token::authority = pool_authority
-    )]
-    pub vault1: Box<Account<'info, TokenAccount>>,
+    #[account(seeds=[b"vault1", pool_state.key().as_ref()], bump)]
+    /// CHECK: This is not dangerous because we don't read or write from this account
+    pub vault1: AccountInfo<'info>,
 
     // account to hold the pool mint
     #[account(
