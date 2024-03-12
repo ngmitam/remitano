@@ -189,32 +189,104 @@ describe("remitano", () => {
 
 	it("removeLiquidity", async () => {
 		let poolAmount = LPAmount(40);
-		await program.rpc
-			.removeLiquidity(poolAmount, {
-				accounts: {
-					userSol: lpUser0.userSol,
-					userMove: lpUser0.userMove,
-					userAta: lpUser0.userAta,
-					owner: lpUser0.signer.publicKey,
-					poolState: pool.poolState,
-					poolAuthority: pool.poolAuthority,
-					vault0: pool.vault0,
-					vault1: pool.vault1,
-					poolMint: pool.poolMint,
-					tokenProgram: token.TOKEN_PROGRAM_ID,
-					systemProgram: anchor.web3.SystemProgram.programId,
-				},
-				signers: [lpUser0.signer],
-			})
-			.catch((err) => {
-				console.log(err);
-			});
+		await program.rpc.removeLiquidity(poolAmount, {
+			accounts: {
+				userSol: lpUser0.userSol,
+				userMove: lpUser0.userMove,
+				userAta: lpUser0.userAta,
+				owner: lpUser0.signer.publicKey,
+				poolState: pool.poolState,
+				poolAuthority: pool.poolAuthority,
+				vault0: pool.vault0,
+				vault1: pool.vault1,
+				poolMint: pool.poolMint,
+				tokenProgram: token.TOKEN_PROGRAM_ID,
+				systemProgram: anchor.web3.SystemProgram.programId,
+			},
+			signers: [lpUser0.signer],
+		});
 
 		// ensure vault got some
 		let vb0 = await getTokenBalance(pool.vault0);
 		let vb1 = await getBalance(pool.vault1);
 
 		assert(vb0 == 100);
+		assert(Math.round(vb1) == 10);
+	});
+
+	it("swapSolForMove", async () => {
+		let solUser = anchor.web3.Keypair.generate();
+		let sig = await connection.requestAirdrop(
+			solUser.publicKey,
+			100 * anchor.web3.LAMPORTS_PER_SOL
+		);
+		await connection.confirmTransaction(sig);
+		let [userMove, userSol, userAta] = await setupLPProvider(solUser, 100);
+		assert(userMove);
+		assert(userSol);
+		assert(userAta);
+
+		let solAmount = LPAmount(2);
+		await program.rpc.swapSolForMove(solAmount, {
+			accounts: {
+				userSol,
+				userMove,
+				owner: solUser.publicKey,
+				poolState: pool.poolState,
+				poolAuthority: pool.poolAuthority,
+				vault0: pool.vault0,
+				vault1: pool.vault1,
+				tokenProgram: token.TOKEN_PROGRAM_ID,
+				systemProgram: anchor.web3.SystemProgram.programId,
+			},
+			signers: [solUser],
+		});
+
+		// ensure vault got some
+		let vb0 = await getTokenBalance(pool.vault0);
+		let vb1 = await getBalance(pool.vault1);
+
+		assert(vb0 > 0);
+		assert(vb1 > 0);
+		assert((vb0 = 80));
+		assert(Math.round(vb1) == 12);
+	});
+
+	it("swapMoveForSol", async () => {
+		let moveUser = anchor.web3.Keypair.generate();
+		let sig = await connection.requestAirdrop(
+			moveUser.publicKey,
+			100 * anchor.web3.LAMPORTS_PER_SOL
+		);
+		await connection.confirmTransaction(sig);
+		let [userMove, userSol, userAta] = await setupLPProvider(moveUser, 100);
+		assert(userMove);
+		assert(userSol);
+		assert(userAta);
+
+		let moveAmount = LPAmount(20);
+		await program.rpc.swapMoveForSol(moveAmount, {
+			accounts: {
+				userSol,
+				userMove,
+				owner: moveUser.publicKey,
+				poolState: pool.poolState,
+				poolAuthority: pool.poolAuthority,
+				vault0: pool.vault0,
+				vault1: pool.vault1,
+				tokenProgram: token.TOKEN_PROGRAM_ID,
+				systemProgram: anchor.web3.SystemProgram.programId,
+			},
+			signers: [moveUser],
+		});
+
+		// ensure vault got some
+		let vb0 = await getTokenBalance(pool.vault0);
+		let vb1 = await getBalance(pool.vault1);
+
+		assert(vb0 > 0);
+		assert(vb1 > 0);
+		assert((vb0 = 100));
 		assert(Math.round(vb1) == 10);
 	});
 });

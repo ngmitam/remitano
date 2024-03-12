@@ -168,6 +168,96 @@ pub mod remitano {
 
         Ok(())
     }
+
+    // swap SOL for MOVE
+    pub fn swap_sol_for_move(ctx: Context<SwapSolForMove>, sol_amount: u64) -> Result<()> {
+        // get the pool vaults
+        let vault0 = &ctx.accounts.vault0;
+        let vault1 = &ctx.accounts.vault1;
+
+        // get the pool state
+        let pool_state = &ctx.accounts.pool_state;
+
+        // check if the pool is already initialized
+        if !pool_state.is_initialized {
+            return Err(ErrorCode::PoolNotInitialized.into());
+        }
+
+        // deposit the SOL tokens
+        anchor_lang::solana_program::program::invoke_signed(
+            &system_instruction::transfer(
+                ctx.accounts.user_sol.to_account_info().key,
+                vault1.to_account_info().key,
+                sol_amount,
+            ),
+            &[
+                ctx.accounts.user_sol.to_account_info(),
+                vault1.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+            ],
+            &[],
+        )?;
+
+        // withdraw the MOVE tokens
+        let bump= ctx.bumps.pool_authority;
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                token::Transfer {
+                    from: vault0.to_account_info(),
+                    to: ctx.accounts.user_move.to_account_info(),
+                    authority: ctx.accounts.pool_authority.to_account_info(),
+                },
+            ).with_signer(
+                &[
+                    &[b"authority", pool_state.key().as_ref(),&[bump]],
+                ]
+            ),
+            sol_amount * RATE,
+        )?;
+
+        Ok(())
+    }
+
+    // swap MOVE for SOL
+    pub fn swap_move_for_sol(ctx: Context<SwapMoveForSol>, move_amount: u64) -> Result<()> {
+        // get the pool vaults
+        let vault0 = &ctx.accounts.vault0;
+        let vault1 = &ctx.accounts.vault1;
+
+        // get the pool state
+        let pool_state = &ctx.accounts.pool_state;
+
+        // check if the pool is already initialized
+        if !pool_state.is_initialized {
+            return Err(ErrorCode::PoolNotInitialized.into());
+        }
+
+        // deposit the MOVE tokens
+        token::transfer(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                token::Transfer {
+                    from: ctx.accounts.user_move.to_account_info(),
+                    to: vault0.to_account_info(),
+                    authority: ctx.accounts.owner.to_account_info(),
+                },
+            ),
+            move_amount,
+        )?;
+
+        let sol_amount = move_amount / RATE;
+
+        // withdraw the SOL tokens
+        if vault1.lamports() < sol_amount {
+            return Err(ErrorCode::InvalidRate.into());
+        }
+
+        let _ = vault1.sub_lamports(sol_amount);
+        **ctx.accounts.user_sol.try_borrow_mut_lamports()? += sol_amount;
+
+        Ok(())
+    }
 }
 
 #[account]
@@ -304,4 +394,61 @@ pub struct RemoveLiquidity<'info> {
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
+
+#[derive(Accounts)]
+pub struct SwapSolForMove<'info> {
+    #[account(mut)]
+    /// CHECK: This is not dangerous because 
+    pub user_sol: AccountInfo<'info>,
+    #[account(mut, has_one=owner)]
+    pub user_move: Box<Account<'info, TokenAccount>>,
+
+    pub owner: Signer<'info>,
+
+    #[account(mut)]
+    pub pool_state: Account<'info, PoolState>,
+    #[account(seeds=[b"authority", pool_state.key().as_ref()], bump)]
+    /// CHECK: This is not dangerous because we don't read or write from this account
+    pub pool_authority: AccountInfo<'info>,
+
+    #[account(mut, 
+        seeds=[b"vault0", pool_state.key().as_ref()], bump)]
+    pub vault0: Account<'info, TokenAccount>,
+    #[account(mut, 
+        seeds=[b"vault1", pool_state.key().as_ref()], bump)]
+    /// CHECK: This is not dangerous because 
+    pub vault1: AccountInfo<'info>,
+
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SwapMoveForSol<'info> {
+    #[account(mut)]
+    /// CHECK: This is not dangerous because 
+    pub user_sol: AccountInfo<'info>,
+    #[account(mut, has_one=owner)]
+    pub user_move: Box<Account<'info, TokenAccount>>,
+
+    pub owner: Signer<'info>,
+
+    #[account(mut)]
+    pub pool_state: Account<'info, PoolState>,
+    #[account(seeds=[b"authority", pool_state.key().as_ref()], bump)]
+    /// CHECK: This is not dangerous because we don't read or write from this account
+    pub pool_authority: AccountInfo<'info>,
+
+    #[account(mut, 
+        seeds=[b"vault0", pool_state.key().as_ref()], bump)]
+    pub vault0: Account<'info, TokenAccount>,
+    #[account(mut, 
+        seeds=[b"vault1", pool_state.key().as_ref()], bump)]
+    /// CHECK: This is not dangerous because 
+    pub vault1: AccountInfo<'info>,
+
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
 
