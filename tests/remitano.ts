@@ -160,8 +160,8 @@ describe("remitano", () => {
 			userAta,
 		};
 
-		let [moveAmount, solAmount] = [LPAmount(50), LPAmount(500)];
-		await program.rpc.addLiquidity(moveAmount, solAmount, {
+		let [solAmount, moveAmount] = [LPAmount(50), LPAmount(500)];
+		await program.rpc.addLiquidity(solAmount, moveAmount, {
 			accounts: {
 				userSol,
 				userMove,
@@ -185,5 +185,36 @@ describe("remitano", () => {
 		assert(vb0 > 0);
 		assert(vb1 > 0);
 		assert(vb1 * 10 >= vb0); // 1:10
+	});
+
+	it("removeLiquidity", async () => {
+		let poolAmount = LPAmount(40);
+		await program.rpc
+			.removeLiquidity(poolAmount, {
+				accounts: {
+					userSol: lpUser0.userSol,
+					userMove: lpUser0.userMove,
+					userAta: lpUser0.userAta,
+					owner: lpUser0.signer.publicKey,
+					poolState: pool.poolState,
+					poolAuthority: pool.poolAuthority,
+					vault0: pool.vault0,
+					vault1: pool.vault1,
+					poolMint: pool.poolMint,
+					tokenProgram: token.TOKEN_PROGRAM_ID,
+					systemProgram: anchor.web3.SystemProgram.programId,
+				},
+				signers: [lpUser0.signer],
+			})
+			.catch((err) => {
+				console.log(err);
+			});
+
+		// ensure vault got some
+		let vb0 = await getTokenBalance(pool.vault0);
+		let vb1 = await getBalance(pool.vault1);
+
+		assert(vb0 == 100);
+		assert(Math.round(vb1) == 10);
 	});
 });
