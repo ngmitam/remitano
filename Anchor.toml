@@ -5,7 +5,7 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-remitano = "ASk79fYt7bfuJUcXFJb4eirRYoVio43ciVgq2qKWrVpi"
+remitano = "4pUWBrXKX1JXQv5fdn76LTGfYjvJqHzkPKxf3it86JPS"
 
 [registry]
 url = "https://api.apr.dev"

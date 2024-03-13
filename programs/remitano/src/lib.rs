@@ -4,7 +4,7 @@ use anchor_spl::{
     token::{Mint, Token, TokenAccount},
 };
 
-declare_id!("ASk79fYt7bfuJUcXFJb4eirRYoVio43ciVgq2qKWrVpi");
+declare_id!("4pUWBrXKX1JXQv5fdn76LTGfYjvJqHzkPKxf3it86JPS");
 
 pub const RATE : u64 = 10;
 
@@ -25,18 +25,33 @@ pub mod remitano {
         InvalidRate,
     }
 
-    // set up the pool SOL <-> MOVE
+    // set up the pool key
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         // check if the pool is already initialized
         let pool_state=  &mut  ctx.accounts.pool_state;
-        if pool_state.is_initialized {
+        if pool_state.is_initialized  > 0{
             return Err(ErrorCode::PoolAlreadyInitialized.into());
         }
 
         // initialize the pool
-        pool_state.is_initialized = true;
+        pool_state.is_initialized = 1;
         Ok(())
     }
+
+    // set up the pool SOL <-> MOVE
+    pub fn initialize_pool(ctx: Context<InitializePool>) -> Result<()> {
+        // check if the pool is already initialized
+        let pool_state=  &mut  ctx.accounts.pool_state;
+        if pool_state.is_initialized  > 1{
+            return Err(ErrorCode::PoolAlreadyInitialized.into());
+        }
+
+        // initialize the pool
+        pool_state.is_initialized = 2;
+        Ok(())
+    }
+
+
 
     // add liquidity to the pool
     pub fn add_liquidity(ctx: Context<AddLiquidity>, sol_amount: u64, move_amount: u64) -> Result<()> {
@@ -56,7 +71,7 @@ pub mod remitano {
         let pool_tokens = sol_amount;
 
         // check if the pool is already initialized
-        if !pool_state.is_initialized {
+        if pool_state.is_initialized  != 2 {
             return Err(ErrorCode::PoolNotInitialized.into());
         }
 
@@ -120,7 +135,7 @@ pub mod remitano {
         let pool_state = &ctx.accounts.pool_state;
 
         // check if the pool is already initialized
-        if !pool_state.is_initialized {
+        if pool_state.is_initialized  != 2{
             return Err(ErrorCode::PoolNotInitialized.into());
         }
 
@@ -179,7 +194,7 @@ pub mod remitano {
         let pool_state = &ctx.accounts.pool_state;
 
         // check if the pool is already initialized
-        if !pool_state.is_initialized {
+        if pool_state.is_initialized != 2 {
             return Err(ErrorCode::PoolNotInitialized.into());
         }
 
@@ -229,7 +244,7 @@ pub mod remitano {
         let pool_state = &ctx.accounts.pool_state;
 
         // check if the pool is already initialized
-        if !pool_state.is_initialized {
+        if pool_state.is_initialized  != 2{
             return Err(ErrorCode::PoolNotInitialized.into());
         }
 
@@ -263,7 +278,7 @@ pub mod remitano {
 #[account]
 #[derive()] 
 pub struct PoolState {
-    pub is_initialized: bool,
+    pub is_initialized: u8,
 }
 
 #[derive(Accounts)]
@@ -278,6 +293,37 @@ pub struct Initialize<'info> {
     )]
     pub pool_state: Box<Account<'info, PoolState>>,
 
+    #[account(seeds=[b"authority", pool_state.key().as_ref()], bump)]
+    /// CHECK: This is not dangerous because we don't read or write from this account
+    pub pool_authority: AccountInfo<'info>,
+
+    // account to hold the pool mint
+    #[account(
+        init, 
+        payer=payer,
+        seeds=[b"pool_mint", pool_state.key().as_ref()], 
+        bump, 
+        mint::decimals = 9,
+        mint::authority = pool_authority
+    )] 
+    pub pool_mint: Box<Account<'info, Mint>>, 
+
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    // accounts required to init a new mint
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub rent: Sysvar<'info, Rent>,
+}
+
+#[derive(Accounts)]
+pub struct InitializePool<'info> {
+    // accounts required to init a new mint
+    pub move_token: Account<'info, Mint>,
+    #[account(mut)]
+    pub pool_state: Account<'info, PoolState>,
     #[account(seeds=[b"authority", pool_state.key().as_ref()], bump)]
     /// CHECK: This is not dangerous because we don't read or write from this account
     pub pool_authority: AccountInfo<'info>,
@@ -304,24 +350,11 @@ pub struct Initialize<'info> {
     /// CHECK: This is not dangerous because 
     pub vault1: AccountInfo<'info>,
 
-    // account to hold the pool mint
-    #[account(
-        init, 
-        payer=payer,
-        seeds=[b"pool_mint", pool_state.key().as_ref()], 
-        bump, 
-        mint::decimals = 9,
-        mint::authority = pool_authority
-    )] 
-    pub pool_mint: Box<Account<'info, Mint>>, 
-
     #[account(mut)]
-    pub payer: Signer<'info>,
+    payer: Signer<'info>,
 
-    // accounts required to init a new mint
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
     pub rent: Sysvar<'info, Rent>,
 }
 

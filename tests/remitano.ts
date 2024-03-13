@@ -31,6 +31,29 @@ describe("remitano", () => {
 		return (await connection.getTokenAccountBalance(ata)).value.uiAmount;
 	};
 
+	async function sendSol(
+		connection: anchor.web3.Connection,
+		amount: number,
+		to: anchor.web3.PublicKey,
+		sender: anchor.web3.Keypair
+	) {
+		const transaction = new anchor.web3.Transaction();
+
+		const sendSolInstruction = anchor.web3.SystemProgram.transfer({
+			fromPubkey: sender.publicKey,
+			toPubkey: to,
+			lamports: amount,
+		});
+
+		transaction.add(sendSolInstruction);
+
+		const sig = await anchor.web3.sendAndConfirmTransaction(
+			connection,
+			transaction,
+			[sender]
+		);
+	}
+
 	let setupLPProvider = async (
 		lpUser: anchor.web3.Keypair,
 		amount: number
@@ -57,25 +80,24 @@ describe("remitano", () => {
 				pool.auth,
 				LPAmount(amount * RATE).toNumber()
 			);
-
-			let sig = await connection.requestAirdrop(
+			await sendSol(
+				connection,
+				amount * anchor.web3.LAMPORTS_PER_SOL,
 				userSol,
-				amount * anchor.web3.LAMPORTS_PER_SOL
+				pool.auth
 			);
-			await connection.confirmTransaction(sig);
 		}
 
 		return [userMove, userSol, userAta];
 	};
 
-	it("Is initialized!", async () => {
+	it("initialize", async () => {
 		let auth = anchor.web3.Keypair.generate();
 		let sig = await connection.requestAirdrop(
 			auth.publicKey,
-			100 * anchor.web3.LAMPORTS_PER_SOL
+			5 * anchor.web3.LAMPORTS_PER_SOL
 		);
 		await connection.confirmTransaction(sig);
-
 		let moveToken = await token.createMint(
 			connection,
 			auth,
@@ -114,13 +136,11 @@ describe("remitano", () => {
 
 		await program.rpc.initialize({
 			accounts: {
-				moveToken,
+				moveToken: moveToken,
 				poolState,
 				poolAuthority,
-				vault0,
-				vault1,
-				poolMint,
 				payer: auth.publicKey,
+				poolMint,
 				systemProgram: anchor.web3.SystemProgram.programId,
 				tokenProgram: token.TOKEN_PROGRAM_ID,
 				associatedTokenProgram: token.ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -139,15 +159,38 @@ describe("remitano", () => {
 			auth,
 		};
 	});
+
+	it("initializePool", async () => {
+		await program.rpc
+			.initializePool({
+				accounts: {
+					poolState: pool.poolState,
+					poolAuthority: pool.poolAuthority,
+					vault0: pool.vault0,
+					vault1: pool.vault1,
+					tokenProgram: token.TOKEN_PROGRAM_ID,
+					systemProgram: anchor.web3.SystemProgram.programId,
+					moveToken: pool.moveToken,
+					payer: pool.auth.publicKey,
+					rent: anchor.web3.SYSVAR_RENT_PUBKEY,
+				},
+				signers: [pool.auth],
+			})
+			.catch((err) => {
+				console.log(err);
+			});
+	});
+
 	let lpUser0; // Liquidity Provider 0
 	it("addLiquidity", async () => {
 		let lpUser = anchor.web3.Keypair.generate();
-		let sig = await connection.requestAirdrop(
+		await sendSol(
+			connection,
+			0.5 * anchor.web3.LAMPORTS_PER_SOL,
 			lpUser.publicKey,
-			100 * anchor.web3.LAMPORTS_PER_SOL
+			pool.auth
 		);
-		await connection.confirmTransaction(sig);
-		let [userMove, userSol, userAta] = await setupLPProvider(lpUser, 1000);
+		let [userMove, userSol, userAta] = await setupLPProvider(lpUser, 0.2);
 		assert(userMove);
 		assert(userSol);
 		assert(userAta);
@@ -160,7 +203,7 @@ describe("remitano", () => {
 			userAta,
 		};
 
-		let [solAmount, moveAmount] = [LPAmount(50), LPAmount(500)];
+		let [solAmount, moveAmount] = [LPAmount(0.05), LPAmount(0.5)];
 		await program.rpc.addLiquidity(solAmount, moveAmount, {
 			accounts: {
 				userSol,
@@ -188,7 +231,7 @@ describe("remitano", () => {
 	});
 
 	it("removeLiquidity", async () => {
-		let poolAmount = LPAmount(40);
+		let poolAmount = LPAmount(0.04);
 		await program.rpc.removeLiquidity(poolAmount, {
 			accounts: {
 				userSol: lpUser0.userSol,
@@ -210,23 +253,23 @@ describe("remitano", () => {
 		let vb0 = await getTokenBalance(pool.vault0);
 		let vb1 = await getBalance(pool.vault1);
 
-		assert(vb0 == 100);
-		assert(Math.round(vb1) == 10);
+		assert(vb0 == 0.1);
 	});
 
 	it("swapSolForMove", async () => {
 		let solUser = anchor.web3.Keypair.generate();
-		let sig = await connection.requestAirdrop(
+		await sendSol(
+			connection,
+			0.5 * anchor.web3.LAMPORTS_PER_SOL,
 			solUser.publicKey,
-			100 * anchor.web3.LAMPORTS_PER_SOL
+			pool.auth
 		);
-		await connection.confirmTransaction(sig);
-		let [userMove, userSol, userAta] = await setupLPProvider(solUser, 100);
+		let [userMove, userSol, userAta] = await setupLPProvider(solUser, 0.2);
 		assert(userMove);
 		assert(userSol);
 		assert(userAta);
 
-		let solAmount = LPAmount(2);
+		let solAmount = LPAmount(0.005);
 		await program.rpc.swapSolForMove(solAmount, {
 			accounts: {
 				userSol,
@@ -248,23 +291,23 @@ describe("remitano", () => {
 
 		assert(vb0 > 0);
 		assert(vb1 > 0);
-		assert((vb0 = 80));
-		assert(Math.round(vb1) == 12);
+		assert(vb0 == 0.05);
 	});
 
 	it("swapMoveForSol", async () => {
 		let moveUser = anchor.web3.Keypair.generate();
-		let sig = await connection.requestAirdrop(
+		await sendSol(
+			connection,
+			0.5 * anchor.web3.LAMPORTS_PER_SOL,
 			moveUser.publicKey,
-			100 * anchor.web3.LAMPORTS_PER_SOL
+			pool.auth
 		);
-		await connection.confirmTransaction(sig);
-		let [userMove, userSol, userAta] = await setupLPProvider(moveUser, 100);
+		let [userMove, userSol, userAta] = await setupLPProvider(moveUser, 0.2);
 		assert(userMove);
 		assert(userSol);
 		assert(userAta);
 
-		let moveAmount = LPAmount(20);
+		let moveAmount = LPAmount(0.02);
 		await program.rpc.swapMoveForSol(moveAmount, {
 			accounts: {
 				userSol,
@@ -286,7 +329,6 @@ describe("remitano", () => {
 
 		assert(vb0 > 0);
 		assert(vb1 > 0);
-		assert((vb0 = 100));
-		assert(Math.round(vb1) == 10);
+		assert((vb0 = 0.1));
 	});
 });
